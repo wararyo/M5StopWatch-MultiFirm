@@ -1,0 +1,5 @@
+__pycache__/
+
+# Local artifacts: flash backups contain NVS (BLE bond keys). Never commit.
+.backup/
+
