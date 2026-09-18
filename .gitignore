@@ -2,4 +2,9 @@ __pycache__/
 
 # Local artifacts: flash backups contain NVS (BLE bond keys). Never commit.
 .backup/
+# Tool state (backups and logs written by tools/multifirm.py)
+.multifirm/
 
+# Native test build and the optional tool virtualenv
+build/
+tools/.venv/

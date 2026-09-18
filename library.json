@@ -1,0 +1,19 @@
+{
+  "name": "M5StopWatch-MultiFirm",
+  "version": "0.1.0",
+  "description": "Coexistence of multiple firmwares on M5StopWatch: shared layout, guest return and host slot APIs",
+  "keywords": ["m5stopwatch", "esp32s3", "ota", "multiboot"],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wararyo/M5StopWatch-MultiFirm.git"
+  },
+  "frameworks": ["espidf", "arduino"],
+  "platforms": ["espressif32"],
+  "build": {
+    "srcDir": "src",
+    "includeDir": "src"
+  },
+  "export": {
+    "exclude": [".backup", ".multifirm", "build", "tools/.venv"]
+  }
+}

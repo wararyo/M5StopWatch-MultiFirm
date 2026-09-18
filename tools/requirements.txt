@@ -1,0 +1,3 @@
+# Verified with Python 3.11.7 (docs/phase0-results.md). multifirm.py refuses device
+# access with any other esptool version unless --allow-untested-esptool is given.
+esptool==4.12.0
