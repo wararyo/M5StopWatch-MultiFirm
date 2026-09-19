@@ -14,6 +14,6 @@
     "includeDir": "src"
   },
   "export": {
-    "exclude": [".backup", ".multifirm", "build", "tools/.venv"]
+    "exclude": [".backup", ".multifirm", "build", "tools/.venv", "**/.pio", "examples/guest-espidf/build-idf", "build-phase2-*.log"]
   }
 }
