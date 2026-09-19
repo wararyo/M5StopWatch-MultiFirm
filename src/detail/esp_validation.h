@@ -34,7 +34,10 @@ inline esp_err_t checkLayout() {
 struct VerifiedImage {
     uint32_t image_size = 0; // Includes appended SHA-256, not partition padding.
     uint8_t app_digest[32] = {};
+    int64_t sha_elapsed_us = 0;
 };
+
+using VerificationClock = int64_t (*)();
 
 inline esp_err_t readImage(const esp_partition_t* p, uint32_t offset, void* out, size_t n) {
     if (offset > p->size || n > p->size - offset) return ESP_ERR_IMAGE_INVALID;
@@ -77,7 +80,8 @@ inline uint32_t little32(const uint8_t* b) {
         (uint32_t(b[2]) << 16) | (uint32_t(b[3]) << 24);
 }
 
-inline esp_err_t verifyImage(const esp_partition_t* p, VerifiedImage& result) {
+inline esp_err_t verifyImage(const esp_partition_t* p, VerifiedImage& result,
+                             VerificationClock clock = nullptr) {
     result = VerifiedImage();
     if (!p || p->type != ESP_PARTITION_TYPE_APP || p->encrypted)
         return ESP_ERR_INVALID_ARG;
@@ -127,6 +131,7 @@ inline esp_err_t verifyImage(const esp_partition_t* p, VerifiedImage& result) {
     uint8_t storedDigest[32], computedDigest[32];
     err = readImage(p, offset, storedDigest, sizeof(storedDigest));
     if (err != ESP_OK) return err;
+    const int64_t sha_started = clock ? clock() : 0;
     Sha256 sha;
     if (sha.start() != 0) return ESP_FAIL;
     for (uint32_t done = 0; done < offset;) {
@@ -137,6 +142,7 @@ inline esp_err_t verifyImage(const esp_partition_t* p, VerifiedImage& result) {
         done += n;
     }
     if (sha.finish(computedDigest) != 0) return ESP_FAIL;
+    if (clock) result.sha_elapsed_us = clock() - sha_started;
     if (std::memcmp(storedDigest, computedDigest, 32) != 0) return ESP_ERR_IMAGE_INVALID;
 
     esp_partition_pos_t pos = {};

@@ -13,5 +13,6 @@ examples/guest-espidf/sdkconfig
 examples/guest-espidf/sdkconfig.old
 examples/guest-espidf/sdkconfig.*.old
 examples/guest-espidf/sdkconfig.guest-espidf
+examples/guest-espidf/sdkconfig.host-espidf
 examples/guest-espidf/dependencies.lock
 examples/guest-espidf/build-idf/

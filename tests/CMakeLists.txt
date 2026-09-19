@@ -39,6 +39,11 @@ if(MULTIFIRM_MBEDTLS_DIR)
     set_property(TARGET test_guest PROPERTY CXX_STANDARD 11)
     target_include_directories(test_guest PRIVATE stubs ../src)
     target_link_libraries(test_guest PRIVATE test_sha)
+    add_executable(test_host test_host.cpp ../src/multifirm_host.cpp)
+    set_property(TARGET test_host PROPERTY CXX_STANDARD 11)
+    target_compile_definitions(test_host PRIVATE MULTIFIRM_HOST=1)
+    target_include_directories(test_host PRIVATE stubs ../src)
+    target_link_libraries(test_host PRIVATE test_sha)
     add_test(NAME guest_fixtures COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/guest_fixtures.py ${CMAKE_CURRENT_BINARY_DIR}/guest-fixtures)
     set_tests_properties(guest_fixtures PROPERTIES FIXTURES_SETUP guest_data)
@@ -49,13 +54,25 @@ if(MULTIFIRM_MBEDTLS_DIR)
         ${CMAKE_CURRENT_BINARY_DIR}/guest-fixtures/legacy3.bin
         ${CMAKE_CURRENT_BINARY_DIR}/guest-fixtures/standalone.bin)
     set_tests_properties(guest PROPERTIES FIXTURES_REQUIRED guest_data)
+    add_test(NAME host COMMAND test_host
+        ${CMAKE_CURRENT_BINARY_DIR}/guest-fixtures/table.bin
+        ${CMAKE_CURRENT_BINARY_DIR}/guest-fixtures/app.bin
+        ${CMAKE_CURRENT_BINARY_DIR}/guest-fixtures/meta.bin
+        ${CMAKE_CURRENT_BINARY_DIR}/guest-fixtures/meta-bad-crc.bin
+        ${CMAKE_CURRENT_BINARY_DIR}/guest-fixtures/default-app.bin
+        ${CMAKE_CURRENT_BINARY_DIR}/guest-fixtures/invalid-project-app.bin
+        ${CMAKE_CURRENT_BINARY_DIR}/guest-fixtures/meta-size-mismatch.bin
+        ${CMAKE_CURRENT_BINARY_DIR}/guest-fixtures/meta-digest-mismatch.bin
+        ${CMAKE_CURRENT_BINARY_DIR}/guest-fixtures/meta-elf-mismatch.bin
+        ${CMAKE_CURRENT_BINARY_DIR}/guest-fixtures/meta-zero-elf.bin)
+    set_tests_properties(host PROPERTIES FIXTURES_REQUIRED guest_data)
 else()
     message(STATUS "Set MULTIFIRM_MBEDTLS_DIR to enable guest SDK-adapter tests")
 endif()
 add_test(NAME layout COMMAND test_layout ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/meta)
 
 # Keep assertions active even when tests are configured with Release.
-foreach(test_target test_layout test_return_gesture test_guest)
+foreach(test_target test_layout test_return_gesture test_guest test_host)
     if(TARGET ${test_target})
         if(MSVC)
             target_compile_options(${test_target} PRIVATE /W4 /WX /UNDEBUG)

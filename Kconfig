@@ -1,0 +1,10 @@
+menu "M5StopWatch MultiFirm"
+
+config MULTIFIRM_HOST
+    bool "Enable MultiFirm host slot APIs"
+    default n
+    help
+        Build the host-side slot scanning, metadata and boot implementation.
+        Guest-only applications should leave this disabled.
+
+endmenu
