@@ -271,11 +271,13 @@ Phase 0 8.3節の「KEY.B脱出後に無音」事象は、今回の10往復で�
 
 ## 5. 後続
 
-- `library.json` の `version` と `tools/multifirm.py` の `TOOL_VERSION` を `1.0.0` に
-  合わせた。リリースタグ `v1.0.0` はユーザーがこのコミットに打つ。
-- タグを push したあと、3ゲストの `lib_deps` を `#a5d9529` から `#v1.0.0` へ切り替える。
-  `a5d9529` 以降に src / tools のコードは変わっていないので、再ビルド確認だけでよく、
-  実機への再インストールは不要。
+- **完了**: `library.json` の `version` と `tools/multifirm.py` の `TOOL_VERSION` を
+  `1.0.0` に合わせ、`v1.0.0`（注釈付きタグ、`766f366`）を打って push した。
+  LICENSE（MIT）もこのタグに含まれる。
+- **完了**: 3ゲストの `lib_deps` と UserDemo の `repos.json` を `#a5d9529` から
+  `v1.0.0` へ切り替え、3本とも再ビルドで確認した。PlatformIO はタグを `766f3667` に
+  解決する。`a5d9529` から `src` は変わっておらず `tools` の差分も `TOOL_VERSION` の
+  1行だけなので、実機のイメージは入れ替えていない。
 - 計画10章 Phase 4 の項目4・5：初回導入・ゲスト更新・ホスト更新・単体用書き込み・復旧・
   バックアップ復元の手順をルートREADMEへ統合する。現状は `tools/README.md` と
   `examples/README.md` に分散している。
