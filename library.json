@@ -1,6 +1,6 @@
 {
   "name": "M5StopWatch-MultiFirm",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Coexistence of multiple firmwares on M5StopWatch: shared layout, guest return and host slot APIs",
   "keywords": ["m5stopwatch", "esp32s3", "ota", "multiboot"],
   "repository": {

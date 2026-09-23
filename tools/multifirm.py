@@ -25,7 +25,7 @@ import layout as L  # noqa: E402
 from device import (REQUIRED_ESPTOOL, Device, DeviceError, DeviceInfo,  # noqa: E402
                     EsptoolDevice, check_esptool)
 
-TOOL_VERSION = "0.1.0"
+TOOL_VERSION = "1.0.0"
 ROOT = Path(__file__).resolve().parents[1]
 FF = b"\xFF"
 RESET_POLICY = ("接続時は default_reset でダウンロードモードへ入り、各操作の間は no_reset で"
