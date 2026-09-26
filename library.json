@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "description": "Coexistence of multiple firmwares on M5StopWatch: shared layout, guest return and host slot APIs",
   "keywords": ["m5stopwatch", "esp32s3", "ota", "multiboot"],
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/wararyo/M5StopWatch-MultiFirm.git"
