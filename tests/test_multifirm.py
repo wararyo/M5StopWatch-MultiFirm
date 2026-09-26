@@ -438,6 +438,39 @@ class InstallTest(ToolCase):
         self.assertEqual(code, 0, out)
         self.assertEqual(bytes(self.dev.flash[part.end - 16:part.end]), b"\xFF" * 16)
 
+    def test_install_reads_image_and_metadata_only_once(self):
+        for size in (1024, 0x12030):
+            with self.subTest(size=size):
+                self.dev.ops.clear()
+                code, out, image = self.install(2, make_image(size=size))
+                self.assertEqual(code, 0, out)
+                part = L.guest_partition(2)
+                meta = L.meta_sector_offset(2)
+                reads = [op for op in self.dev.ops if op[0] == "read"
+                         and (part.offset <= op[1] < part.end or op[1] == meta)]
+                self.assertEqual(reads, [("read", part.offset, len(image)),
+                                         ("read", meta, L.SECTOR_SIZE)])
+                self.assertIn("イメージ検証 OK", out)
+                self.assertIn("メタデータ検証 OK", out)
+
+    def test_metadata_readback_mismatch_is_failure_without_reset(self):
+        meta = L.meta_sector_offset(1)
+        self.dev.corrupt_write = lambda off, data: (
+            bytes([data[0] ^ 1]) + data[1:] if off == meta else data)
+        code, out, _ = self.install(1)
+        self.assertEqual(code, 1)
+        self.assertIn("読み戻しが一致しません", out)
+        self.assertFalse(self.dev.was_reset)
+
+    def test_image_readback_failure_does_not_publish_metadata_or_reset(self):
+        part = L.guest_partition(1)
+        meta = L.meta_sector_offset(1)
+        self.dev.fail_on = lambda op, off, size: op == "read" and off == part.offset
+        code, out, _ = self.install(1)
+        self.assertEqual(code, 1, out)
+        self.assertNotIn(("write", meta, L.SECTOR_SIZE), self.dev.ops)
+        self.assertFalse(self.dev.was_reset)
+
     def test_rejects_other_layouts_without_writing(self):
         for table in (L.LEGACY_3GUEST, L.LEGACY_2APP,
                       L.encode_partition_table((L.Partition("app0", 0, 0, 0x10000, 0xC80000),))):
@@ -589,6 +622,9 @@ class HostAndRecoverTest(ToolCase):
         code, out = self.run_tool("install-host", self.file("h.bin", host), "--port", "COM99", "--execute")
         self.assertEqual(code, 0, out)
         backups = list((self.dir / "state" / "backups").glob("backup-*.bin"))
+        self.assertEqual([op for op in self.dev.ops if op[0] == "read"
+                          and L.HOST.offset <= op[1] < L.HOST.end],
+                         [("read", L.HOST.offset, len(host))])
         self.assertEqual(len(backups), 1)
         self.assertEqual(backups[0].read_bytes(), before)
         manifest = json.loads(backups[0].with_suffix(".json").read_text(encoding="utf-8"))

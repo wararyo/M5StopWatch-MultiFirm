@@ -166,13 +166,14 @@ def erase_verified(dev: Device, log: Log, offset: int, size: int, what: str) -> 
     log("    消去済みを確認")
 
 
-def write_verified(dev: Device, log: Log, offset: int, data: bytes, what: str) -> None:
+def write_verified(dev: Device, log: Log, offset: int, data: bytes, what: str) -> bytes:
     log(f"  書き込み {what}: {rng(offset, len(data))} SHA-256 {hashlib.sha256(data).hexdigest()}")
     dev.write(offset, data)
     back = dev.read(offset, len(data))
     if back != data:
         raise ToolError(f"{what} の読み戻しが一致しません")
     log("    読み戻し一致")
+    return back
 
 
 def snapshot(dev: Device, regions: list[tuple[str, int, int]]) -> list[tuple[str, int, bytes]]:
@@ -226,6 +227,11 @@ def read_slot_image(dev: Device, part: L.Partition) -> SlotReport:
                 buf += dev.read(part.offset + len(buf), want - len(buf))
             except DeviceError as e:
                 return SlotReport(part.label, READ_ERROR, None, str(e))
+    return slot_report(part, info)
+
+
+def slot_report(part: L.Partition, info: img.ImageInfo) -> SlotReport:
+    """Apply the same app/digest requirements to streamed and read-back images."""
     if info.ok and info.kind != "app":
         info.errors.append("not an app image")
     if info.ok and not info.digest_ok:
@@ -622,13 +628,13 @@ def cmd_install(ctx: Ctx) -> int:
         log("実行:")
         erase_verified(dev, log, meta_off, L.SECTOR_SIZE, f"メタデータ[{args.slot}]")
         erase_verified(dev, log, part.offset, part.size, part.label)
-        write_verified(dev, log, part.offset, data, part.label)
-        back = read_slot_image(dev, part)
+        readback = write_verified(dev, log, part.offset, data, part.label)
+        back = slot_report(part, img.parse_image(readback, part.size))
         if back.state != READY or back.info.appended_digest != info.appended_digest:
             raise ToolError(f"書き込んだイメージを検証できません: {back.state} {back.error}")
         log(f"    イメージ検証 OK (digest {info.appended_digest.hex()})")
-        write_verified(dev, log, meta_off, sector, f"メタデータ[{args.slot}]")
-        rec, reason = L.decode_meta(dev.read(meta_off, L.SECTOR_SIZE), part.size)
+        meta_readback = write_verified(dev, log, meta_off, sector, f"メタデータ[{args.slot}]")
+        rec, reason = L.decode_meta(meta_readback, part.size)
         reason = reason or match_meta(rec, back.info)
         if reason:
             raise ToolError(f"メタデータを検証できません: {reason}")
@@ -683,8 +689,8 @@ def cmd_install_host(ctx: Ctx) -> int:
         snaps = snapshot(dev, preserved_regions()[:4])
         log("実行:")
         erase_verified(dev, log, L.HOST.offset, L.HOST.size, "ota_0")
-        write_verified(dev, log, L.HOST.offset, data, "ota_0")
-        back = read_slot_image(dev, L.HOST)
+        readback = write_verified(dev, log, L.HOST.offset, data, "ota_0")
+        back = slot_report(L.HOST, img.parse_image(readback, L.HOST.size))
         if back.state != READY or back.info.appended_digest != info.appended_digest:
             raise ToolError(f"書き込んだホストを検証できません: {back.state} {back.error}")
         log(f"    イメージ検証 OK (digest {info.appended_digest.hex()})")
