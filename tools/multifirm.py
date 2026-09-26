@@ -608,7 +608,8 @@ def cmd_install(ctx: Ctx) -> int:
         sector = L.meta_sector(record)
         plan_header(log, [
             f"1. メタデータ[{args.slot}] 消去 {rng(meta_off, L.SECTOR_SIZE)}",
-            f"2. {part.label} 全域消去 {rng(part.offset, part.size)}",
+            (f"2. {part.label} 全域消去 {rng(part.offset, part.size)}" if args.erase_slot
+             else "2. 書き込み対象セクタのみ自動消去 (スロット末尾は保持)"),
             f"3. イメージ書き込み・読み戻し検証 {rng(part.offset, len(data))}",
             f"4. メタデータ[{args.slot}] 書き込み・読み戻し検証 {rng(meta_off, L.SECTOR_SIZE)}",
             "書き込まない: NVS / multifirm_nvs / otadata / phy_init / 他スロット / 他メタデータ",
@@ -627,7 +628,8 @@ def cmd_install(ctx: Ctx) -> int:
         snaps = snapshot(dev, preserved_regions(exclude_meta_slot=args.slot))
         log("実行:")
         erase_verified(dev, log, meta_off, L.SECTOR_SIZE, f"メタデータ[{args.slot}]")
-        erase_verified(dev, log, part.offset, part.size, part.label)
+        if args.erase_slot:
+            erase_verified(dev, log, part.offset, part.size, part.label)
         readback = write_verified(dev, log, part.offset, data, part.label)
         back = slot_report(part, img.parse_image(readback, part.size))
         if back.state != READY or back.info.appended_digest != info.appended_digest:
@@ -661,7 +663,8 @@ def cmd_install_host(ctx: Ctx) -> int:
         data, info = load_host_image(args.firmware, log)
         plan_header(log, [
             "1. 全体バックアップを確認 (現状と一致しなければ新規取得)",
-            f"2. ota_0 全域消去 {rng(L.HOST.offset, L.HOST.size)}",
+            (f"2. ota_0 全域消去 {rng(L.HOST.offset, L.HOST.size)}" if args.erase_slot
+             else "2. 書き込み対象セクタのみ自動消去 (スロット末尾は保持)"),
             f"3. ホスト書き込み・読み戻し検証 {rng(L.HOST.offset, len(data))}",
             "4. ブートローダ・表・メタデータ・ゲスト3スロットがバックアップと一致することを確認",
             "書き込まない: ブートローダ / NVS / multifirm_nvs / otadata / ゲスト",
@@ -688,7 +691,8 @@ def cmd_install_host(ctx: Ctx) -> int:
             _, backup = take_backup(ctx, dev, dinfo, log)
         snaps = snapshot(dev, preserved_regions()[:4])
         log("実行:")
-        erase_verified(dev, log, L.HOST.offset, L.HOST.size, "ota_0")
+        if args.erase_slot:
+            erase_verified(dev, log, L.HOST.offset, L.HOST.size, "ota_0")
         readback = write_verified(dev, log, L.HOST.offset, data, "ota_0")
         back = slot_report(L.HOST, img.parse_image(readback, L.HOST.size))
         if back.state != READY or back.info.appended_digest != info.appended_digest:
@@ -823,11 +827,13 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("firmware")
     sp.add_argument("--slot", type=int, choices=L.GUEST_SLOTS, required=True)
     sp.add_argument("--name", help="表示名 (UTF-8 31 bytes 以内)")
+    sp.add_argument("--erase-slot", action="store_true", help="書き込み前に対象スロット全体を消去・検証する")
     device_opts(sp, change=True)
 
     sp = sub.add_parser("install-host", help="ホストを ota_0 に書き込む")
     sp.add_argument("firmware")
     sp.add_argument("--backup", help="使用する全体バックアップ (.bin)")
+    sp.add_argument("--erase-slot", action="store_true", help="書き込み前に対象スロット全体を消去・検証する")
     device_opts(sp, change=True)
 
     sp = sub.add_parser("recover", help="otadata を消してホストへ戻す")

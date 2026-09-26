@@ -29,8 +29,8 @@ tools\.venv\Scripts\python.exe -m pip install -r tools\requirements.txt
 multifirm.ps1 inspect <firmware.bin> [--role guest|host]
 multifirm.ps1 status --port COMxx [--verify]
 multifirm.ps1 backup --port COMxx [--out <dir>]
-multifirm.ps1 install --slot {1,2,3} <firmware.bin> [--name "表示名"] [--port COMxx (--check-device | --execute)]
-multifirm.ps1 install-host <host.bin> [--backup <file>] [--port COMxx (--check-device | --execute)]
+multifirm.ps1 install --slot {1,2,3} <firmware.bin> [--name "表示名"] [--erase-slot] [--port COMxx (--check-device | --execute)]
+multifirm.ps1 install-host <host.bin> [--backup <file>] [--erase-slot] [--port COMxx (--check-device | --execute)]
 multifirm.ps1 recover [--port COMxx (--check-device | --execute)]
 multifirm.ps1 initial --host-build <ESP-IDF build dir> [--backup <file>] [--port COMxx (--check-device | --execute)]
 ```
@@ -131,12 +131,14 @@ tools\multifirm.ps1 initial --host-build ..\M5StopWatch-UserDemo\build --port CO
 **install** は次の順に進みます。どこで止まっても、同じ `install` を再実行すれば完了します。
 
 1. 対象スロットの表示名を消す
-2. 対象スロット全体を消去する
+2. `--erase-slot` 指定時のみ、対象スロット全体を消去・検証する
 3. イメージを書き込み、読み戻して確認する
 4. 表示名を書き込み、読み戻して確認する
 5. 書き込み対象外の領域が変わっていないことを確認する
 
 **install-host** は、この機体の既存のバックアップが現状と一致するか確認し、一致しなければ新しく16 MiB のバックアップを取ります。そのうえで `ota_0` だけを書き換え、ブートローダ、表、ゲスト、設定が変わっていないことを確認します。ブートローダは書きません。
+
+`install` / `install-host` は、通常はスロット全体の事前消去を行わず、esptool が書き込み対象のセクタだけを自動消去します。新しいファームが小さい場合、対象セクタより後ろに古いデータが残りますが、イメージの起動・検証には使われません。末尾も消したい場合は `--erase-slot` を付けてください。読み戻し検証、ゲストの表示名メタデータの事前消去、ホストのバックアップ確認はどちらの場合も行います。`initial` の消去手順は変わりません。
 
 **initial** は ESP-IDF のビルドディレクトリ (`flasher_args.json` と `config/sdkconfig.json` があるもの) からブートローダ、パーティション表、ホストを取り出します。次の場合は拒否します。
 

@@ -410,7 +410,7 @@ class InstallTest(ToolCase):
         part = L.guest_partition(2)
         meta = L.meta_sector_offset(2)
         self.assertEqual(self.dev.mutating_ops(), [
-            ("erase", meta, L.SECTOR_SIZE), ("erase", part.offset, part.size),
+            ("erase", meta, L.SECTOR_SIZE),
             ("write", part.offset, len(image)), ("write", meta, L.SECTOR_SIZE)])
         self.assertTrue(self.dev.was_reset)
         after = bytes(self.dev.flash)
@@ -434,9 +434,11 @@ class InstallTest(ToolCase):
     def test_slot_is_fully_erased_before_write(self):
         part = L.guest_partition(1)
         self.dev.flash[part.end - 16:part.end] = b"\x00" * 16  # leftovers from an older image
-        code, out, _ = self.install(1)
+        code, out, _ = self.install(1, None, "--erase-slot")
         self.assertEqual(code, 0, out)
         self.assertEqual(bytes(self.dev.flash[part.end - 16:part.end]), b"\xFF" * 16)
+        self.assertIn(("erase", part.offset, part.size), self.dev.ops)
+        self.assertIn(("verify", part.offset, part.size), self.dev.ops)
 
     def test_install_reads_image_and_metadata_only_once(self):
         for size in (1024, 0x12030):
@@ -513,7 +515,7 @@ class InstallTest(ToolCase):
         original = self.dev.erase
         self.dev.erase = lambda off, size: None if off == L.guest_partition(1).offset else original(off, size)
         self.dev.flash[L.guest_partition(1).offset] = 0
-        code, out, _ = self.install(1)
+        code, out, _ = self.install(1, None, "--erase-slot")
         self.assertEqual(code, 1)
         self.assertIn("消去を確認できません", out)
         self.assertFalse(self.dev.was_reset)
@@ -524,7 +526,7 @@ class InstallTest(ToolCase):
         code, out, image = self.install(1)
         self.assertEqual(code, 1)
         self.assertFalse(self.dev.was_reset)
-        # Interrupted state: metadata erased, slot empty. The same install recovers.
+        # Interrupted state: metadata erased. The same install recovers.
         self.assertEqual(bytes(self.dev.flash[L.meta_sector_offset(1):L.meta_sector_offset(1) + 4]), b"\xFF" * 4)
         self.dev.fail_on = lambda op, off, size: False
         code, out, _ = self.install(1, image)
@@ -613,6 +615,38 @@ class StatusTest(ToolCase):
 
 
 class HostAndRecoverTest(ToolCase):
+    def test_update_smaller_image_with_optional_full_erase(self):
+        for command, part, slot_args in (("install", L.guest_partition(1), ["--slot", "1"]),
+                                         ("install-host", L.HOST, [])):
+            for full_erase in (False, True):
+                with self.subTest(command=command, full_erase=full_erase):
+                    old = make_image(size=0x12030, seed=7)
+                    new = make_image(size=0x1030, seed=8)
+                    self.dev.flash[part.offset:part.offset + len(old)] = old
+                    before = bytes(self.dev.flash[part.offset:part.end])
+                    self.dev.ops.clear()
+                    argv = [command, self.file("smaller.bin", new), *slot_args]
+                    if full_erase:
+                        argv.append("--erase-slot")
+                    code, out = self.run_tool(*argv)
+                    self.assertEqual(code, 0, out)
+                    self.assertIn("全域消去" if full_erase else "対象セクタのみ自動消去", out)
+                    self.assertEqual(self.dev.ops, [])
+                    code, out = self.run_tool(*argv, "--port", "COM99", "--execute")
+                    self.assertEqual(code, 0, out)
+                    end = (len(new) + L.SECTOR_SIZE - 1) // L.SECTOR_SIZE * L.SECTOR_SIZE
+                    self.assertEqual(bytes(self.dev.flash[part.offset:part.offset + len(new)]), new)
+                    self.assertEqual(bytes(self.dev.flash[part.offset + len(new):part.offset + end]),
+                                     b"\xff" * (end - len(new)))
+                    self.assertEqual(bytes(self.dev.flash[part.offset + end:part.end]),
+                                     b"\xff" * (part.size - end) if full_erase else before[end:])
+                    self.assertEqual(("erase", part.offset, part.size) in self.dev.ops, full_erase)
+                    self.assertEqual(("verify", part.offset, part.size) in self.dev.ops, full_erase)
+                    report = M.read_slot_image(self.dev, part)
+                    self.assertEqual(report.state, M.READY)
+                    self.assertEqual(report.info.image_size, len(new))
+                    self.assertEqual(report.info.appended_digest, new[-32:])
+
     def test_install_host_takes_backup_and_preserves_everything_else(self):
         guest = make_image(desc=app_desc("Guest"), seed=5)
         p1 = L.guest_partition(1)
@@ -636,7 +670,7 @@ class HostAndRecoverTest(ToolCase):
         self.assertEqual(after[L.HOST.end:], before[L.HOST.end:])
         self.assertEqual(after[L.HOST.offset:L.HOST.offset + len(host)], host)
         self.assertEqual([op for op in self.dev.mutating_ops()],
-                         [("erase", L.HOST.offset, L.HOST.size), ("write", L.HOST.offset, len(host))])
+                         [("write", L.HOST.offset, len(host))])
 
         # Second run reuses the matching backup (no new 16 MiB read).
         self.dev.ops.clear()
