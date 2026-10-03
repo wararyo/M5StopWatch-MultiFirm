@@ -32,7 +32,7 @@ multifirm.ps1 backup --port COMxx [--out <dir>]
 multifirm.ps1 install --slot {1,2,3} <firmware.bin> [--name "表示名"] [--erase-slot] [--port COMxx (--check-device | --execute)]
 multifirm.ps1 install-host <host.bin> [--backup <file>] [--erase-slot] [--port COMxx (--check-device | --execute)]
 multifirm.ps1 recover [--port COMxx (--check-device | --execute)]
-multifirm.ps1 initial --host-build <ESP-IDF build dir> [--backup <file>] [--port COMxx (--check-device | --execute)]
+multifirm.ps1 initial --host-build <build dir> [--backup <file>] [--port COMxx (--check-device | --execute)]
 ```
 
 | コマンド | 用途 |
@@ -84,6 +84,12 @@ tools\multifirm.ps1 recover --port COM11 --execute
 ```powershell
 tools\multifirm.ps1 initial --host-build ..\M5StopWatch-UserDemo\build --port COM11 --check-device
 tools\multifirm.ps1 initial --host-build ..\M5StopWatch-UserDemo\build --port COM11 --execute
+```
+
+ホストを PlatformIO (`framework = espidf`) でビルドしている場合は、`pio run` の後に環境ごとのビルドディレクトリを指定します。
+
+```powershell
+tools\multifirm.ps1 initial --host-build ..\M5StopWatch-wararyoLauncher\.pio\build\m5stopwatch --port COM11 --check-device
 ```
 
 **NVS の設定と BLE のペアリング情報は消えます。ゲストもすべて消えるので、再インストールが必要です。** storage (バッジ画像など) と coredump の領域には触れません。
@@ -140,12 +146,17 @@ tools\multifirm.ps1 initial --host-build ..\M5StopWatch-UserDemo\build --port CO
 
 `install` / `install-host` は、通常はスロット全体の事前消去を行わず、esptool が書き込み対象のセクタだけを自動消去します。新しいファームが小さい場合、対象セクタより後ろに古いデータが残りますが、イメージの起動・検証には使われません。末尾も消したい場合は `--erase-slot` を付けてください。読み戻し検証、ゲストの表示名メタデータの事前消去、ホストのバックアップ確認はどちらの場合も行います。`initial` の消去手順は変わりません。
 
-**initial** は ESP-IDF のビルドディレクトリ (`flasher_args.json` と `config/sdkconfig.json` があるもの) からブートローダ、パーティション表、ホストを取り出します。次の場合は拒否します。
+**initial** は ESP-IDF のビルドディレクトリ (`flasher_args.json` と `config/sdkconfig.json` があるもの) からブートローダ、パーティション表、ホストを取り出します。
+
+PlatformIO の espidf ビルドにも `flasher_args.json` はありますが、そこに書かれたファイルは作られず、代わりに `bootloader.bin`、`partitions.bin`、`firmware.bin` が出力されます。`flasher_args.json` のファイルがそろっていれば ESP-IDF のビルドとして扱います。そろっておらず、PlatformIO のビルドディレクトリ (`.sconsign*.dblite` があるもの) であれば PlatformIO の3ファイルを使います。オフセットと設定の確認には、どちらの場合も `flasher_args.json` と `config/sdkconfig.json` を使います。`config/sdkconfig.json` がホストのイメージより新しい場合は、ビルドが古い可能性があるため警告します。
+
+次の場合は拒否します。
 
 - パーティション表が MultiFirm v1 と一致しない
 - パーティション表の位置が 0x8000 でない、flash が 16MB でない
 - ロールバック、Secure Boot、Flash Encryption のいずれかが有効
 - `--backup` を指定したが、実機の内容と一致しない
+- PlatformIO のビルドで、PHY 初期化データをパーティションに置く設定になっている (PlatformIO はそのデータを出力しない)
 
 PHY 初期化データをパーティションに置く設定なら、そのデータも書き込みます。
 

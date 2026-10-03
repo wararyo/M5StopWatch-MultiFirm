@@ -329,20 +329,56 @@ def _truthy(cfg: dict, key: str) -> bool:
     return bool(cfg.get(key, False))
 
 
+HOST_BUILD_KEYS = (("bootloader", L.BOOTLOADER_OFFSET), ("partition-table", L.PARTITION_TABLE_OFFSET),
+                   ("app", L.HOST.offset))
+# PlatformIO's espidf builder runs CMake only to configure, so flasher_args.json names
+# files that SCons never writes; it writes these instead, next to flasher_args.json.
+PIO_HOST_FILES = {"bootloader": "bootloader.bin", "partition-table": "partitions.bin", "app": "firmware.bin"}
+
+
+def _is_platformio_build(root: Path) -> bool:
+    return any(root.glob(".sconsign*.dblite"))
+
+
 def load_host_build(directory: str, log: Log) -> HostBuild:
     root = Path(directory)
     try:
         flasher = json.loads((root / "flasher_args.json").read_text(encoding="utf-8"))
         cfg = json.loads((root / "config" / "sdkconfig.json").read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
-        raise ToolError(f"ESP-IDF のビルドディレクトリとして読めません: {e}")
-    log(f"ホストビルド: {root.resolve()}")
+        raise ToolError(f"ESP-IDF / PlatformIO のビルドディレクトリとして読めません: {e}")
 
-    def entry(key: str, offset: int) -> Path:
+    def entry(key: str, offset: int) -> str:
         item = flasher.get(key)
         if not item or int(item["offset"], 0) != offset:
             raise ToolError(f"flasher_args.json の {key} が 0x{offset:x} にありません")
-        return root / item["file"]
+        return item["file"]
+
+    # Decide the kind once for the whole directory, so files from the two kinds never mix.
+    idf_files = {key: root / entry(key, offset) for key, offset in HOST_BUILD_KEYS}
+    pio_files = {key: root / name for key, name in PIO_HOST_FILES.items()}
+    idf_missing = [str(p) for p in idf_files.values() if not p.is_file()]
+    pio_missing = [str(p) for p in pio_files.values() if not p.is_file()]
+    if not idf_missing:
+        kind, files = "ESP-IDF", idf_files
+    elif _is_platformio_build(root) and not pio_missing:
+        kind, files = "PlatformIO", pio_files
+    elif _is_platformio_build(root):
+        raise ToolError("PlatformIO のビルド成果物が見つかりません。ビルドが完了しているか確認してください: "
+                        + ", ".join(pio_missing))
+    else:
+        raise ToolError("flasher_args.json が示すファイルが見つかりません。ビルドが完了しているか確認してください: "
+                        + ", ".join(idf_missing))
+    log(f"ホストビルド ({kind}): {root.resolve()}")
+    config_path = root / "config" / "sdkconfig.json"
+    if config_path.stat().st_mtime > files["app"].stat().st_mtime:
+        log(f"  警告: config/sdkconfig.json が {files['app'].name} より新しく、ビルドが古い可能性があります")
+
+    def read(path: Path) -> bytes:
+        try:
+            return path.read_bytes()
+        except OSError as e:
+            raise ToolError(f"{path} を読めません: {e}")
 
     problems = []
     if cfg.get("PARTITION_TABLE_OFFSET") != L.PARTITION_TABLE_OFFSET:
@@ -357,7 +393,7 @@ def load_host_build(directory: str, log: Log) -> HostBuild:
     if problems:
         raise ToolError("ホストビルドの設定が対応外です: " + "; ".join(problems))
 
-    bl = entry("bootloader", L.BOOTLOADER_OFFSET).read_bytes()
+    bl = read(files["bootloader"])
     bl_info = img.verify_bootloader_file(bl, L.BOOTLOADER_MAX_SIZE)
     log("  bootloader:")
     for line in img.describe(bl_info):
@@ -365,21 +401,23 @@ def load_host_build(directory: str, log: Log) -> HostBuild:
     if not bl_info.ok:
         raise ToolError("ブートローダを受け付けられません: " + "; ".join(bl_info.errors))
 
-    table = entry("partition-table", L.PARTITION_TABLE_OFFSET).read_bytes()
+    table = read(files["partition-table"])
     if table.ljust(L.PARTITION_TABLE_SIZE, FF)[:L.PARTITION_TABLE_SIZE] != L.PARTITION_TABLE \
             or len(table) > L.PARTITION_TABLE_SIZE:
         raise ToolError("ビルドのパーティション表が MultiFirm v1 と一致しません")
     log(f"  partition-table: MultiFirm v1 と一致 ({len(table)} bytes)")
 
-    app_path = entry("app", L.HOST.offset)
-    app, app_info = load_host_image(str(app_path), log)
+    app, app_info = load_host_image(str(files["app"]), log)
 
     phy = None
     if _truthy(cfg, "ESP_PHY_INIT_DATA_IN_PARTITION"):
-        files = {int(k, 0): v for k, v in flasher.get("flash_files", {}).items()}
-        if L.PHY_INIT.offset not in files:
+        if kind == "PlatformIO":
+            raise ToolError("PHY 初期化データをパーティションに置く設定ですが、PlatformIO のビルドは "
+                            "phy_init のファイルを出力しないため対応していません")
+        flash_files = {int(k, 0): v for k, v in flasher.get("flash_files", {}).items()}
+        if L.PHY_INIT.offset not in flash_files:
             raise ToolError("PHY 初期化データをパーティションに置く設定ですが、phy_init のファイルがありません")
-        phy = (root / files[L.PHY_INIT.offset]).read_bytes()
+        phy = read(root / flash_files[L.PHY_INIT.offset])
         if not 0 < len(phy) <= L.PHY_INIT.size:
             raise ToolError("phy_init データのサイズが不正です")
         log(f"  phy_init: {len(phy)} bytes を書き込む")
@@ -844,7 +882,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--out", help="保存先ディレクトリ")
 
     sp = sub.add_parser("initial", help="新配置を初期導入 (全体バックアップ後)")
-    sp.add_argument("--host-build", required=True, help="ホストの ESP-IDF build ディレクトリ")
+    sp.add_argument("--host-build", required=True, help="ホストの ESP-IDF build ディレクトリ、または PlatformIO の .pio/build/<env>")
     sp.add_argument("--backup", help="取得済みの全体バックアップ (実機と一致する場合のみ使用)")
     device_opts(sp, change=True)
     return p

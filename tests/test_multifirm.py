@@ -725,18 +725,29 @@ class HostAndRecoverTest(ToolCase):
 
 
 def make_host_build(root: Path, *, table: bytes = L.PARTITION_TABLE, rollback: bool = False,
-                    phy_in_partition: bool = False) -> Path:
+                    phy_in_partition: bool = False, platformio: bool = False) -> Path:
+    """ESP-IDF build dir, or with platformio=True the .pio/build/<env> shape: the same
+    flasher_args.json, but the files it names are absent and SCons' names exist instead."""
     root.mkdir(parents=True, exist_ok=True)
-    (root / "bootloader").mkdir(exist_ok=True)
-    (root / "partition_table").mkdir(exist_ok=True)
     (root / "config").mkdir(exist_ok=True)
-    (root / "bootloader" / "bootloader.bin").write_bytes(make_bootloader())
-    (root / "partition_table" / "partition-table.bin").write_bytes(table)
-    (root / "Host.bin").write_bytes(make_image(desc=app_desc("StopWatch-UserDemo"), seed=44))
+    bootloader = make_bootloader()
+    host = make_image(desc=app_desc("StopWatch-UserDemo"), seed=44)
+    if platformio:
+        (root / ".sconsign311.dblite").write_bytes(b"")
+        (root / "bootloader.bin").write_bytes(bootloader)
+        (root / "partitions.bin").write_bytes(table)
+        (root / "firmware.bin").write_bytes(host)
+    else:
+        (root / "bootloader").mkdir(exist_ok=True)
+        (root / "partition_table").mkdir(exist_ok=True)
+        (root / "bootloader" / "bootloader.bin").write_bytes(bootloader)
+        (root / "partition_table" / "partition-table.bin").write_bytes(table)
+        (root / "Host.bin").write_bytes(host)
     flash_files = {"0x0": "bootloader/bootloader.bin", "0x8000": "partition_table/partition-table.bin",
                    "0x20000": "Host.bin", "0x19000": "ota_data_initial.bin"}
     if phy_in_partition:
-        (root / "phy_init_data.bin").write_bytes(b"PHYDATA" * 20)
+        if not platformio:
+            (root / "phy_init_data.bin").write_bytes(b"PHYDATA" * 20)
         flash_files["0x1b000"] = "phy_init_data.bin"
     flasher = {"flash_files": flash_files,
                "bootloader": {"offset": "0x0", "file": "bootloader/bootloader.bin"},
@@ -794,6 +805,49 @@ class InitialTest(ToolCase):
             code, out = self.run_tool("initial", "--host-build", str(build), "--port", "COM99", "--execute")
             self.assertEqual(code, 1, out)
         self.assertEqual(self.factory_calls, 0)
+
+    def test_initial_from_platformio_build(self):
+        build = make_host_build(self.dir / "pio", platformio=True)
+        code, out = self.run_tool("initial", "--host-build", str(build), "--port", "COM99", "--execute")
+        self.assertEqual(code, 0, out)
+        self.assertIn("ホストビルド (PlatformIO)", out)
+        after = bytes(self.dev.flash)
+        host = (build / "firmware.bin").read_bytes()
+        self.assertEqual(after[L.HOST.offset:L.HOST.offset + len(host)], host)
+        boot = (build / "bootloader.bin").read_bytes()
+        self.assertEqual(after[:len(boot)], boot)
+        self.assertEqual(L.classify_table(after[0x8000:0x8C00]), "multifirm-v1")
+
+    def test_initial_prefers_flasher_args_files_when_present(self):
+        build = make_host_build(self.dir / "build")
+        (build / ".sconsign311.dblite").write_bytes(b"")
+        (build / "firmware.bin").write_bytes(b"not an image")
+        code, out = self.run_tool("initial", "--host-build", str(build))
+        self.assertEqual(code, 0, out)
+        self.assertIn("ホストビルド (ESP-IDF)", out)
+
+    def test_initial_rejects_incomplete_builds_before_connecting(self):
+        idf = make_host_build(self.dir / "idf")
+        (idf / "Host.bin").unlink()
+        pio = make_host_build(self.dir / "pio", platformio=True)
+        (pio / "firmware.bin").unlink()
+        pio_phy = make_host_build(self.dir / "pio_phy", platformio=True, phy_in_partition=True)
+        for build, message in ((idf, "flasher_args.json が示すファイルが見つかりません"),
+                               (pio, "PlatformIO のビルド成果物が見つかりません"),
+                               (pio_phy, "PlatformIO のビルドは phy_init")):
+            code, out = self.run_tool("initial", "--host-build", str(build), "--port", "COM99", "--execute")
+            self.assertEqual(code, 1, out)
+            self.assertIn(message, out)
+        self.assertEqual(self.factory_calls, 0)
+
+    def test_initial_warns_when_config_is_newer_than_app(self):
+        build = make_host_build(self.dir / "pio", platformio=True)
+        app = build / "firmware.bin"
+        os.utime(app, (NOW - 60, NOW - 60))
+        os.utime(build / "config" / "sdkconfig.json", (NOW, NOW))
+        code, out = self.run_tool("initial", "--host-build", str(build))
+        self.assertEqual(code, 0, out)
+        self.assertIn("ビルドが古い可能性があります", out)
 
     def test_initial_with_stale_backup_refuses(self):
         stale = self.dir / "stale.bin"
