@@ -845,7 +845,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub = p.add_subparsers(dest="command", required=True)
 
     def device_opts(sp: argparse.ArgumentParser, change: bool) -> None:
-        sp.add_argument("--port", help="シリアルポート (例: COM11)")
+        sp.add_argument("--port", help="シリアルポート (例: COM11、/dev/ttyACM0、/dev/cu.usbmodem1101)")
         sp.add_argument("--baud", type=int, default=460800)
         sp.add_argument("--allow-untested-esptool", action="store_true")
         if change:

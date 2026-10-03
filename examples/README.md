@@ -20,6 +20,8 @@ python tools/multifirm.py inspect examples/guest-arduino/.pio/build/guest-arduin
 tools/multifirm.ps1 install --slot 1 examples/guest-arduino/.pio/build/guest-arduino/firmware.bin --name "Guest Arduino" --port COM11
 ```
 
+macOS / Linuxでは `python3` と `tools/multifirm.sh` を使い、`--port` に `/dev/ttyACM0` などを指定する（実機での動作は未確認）。
+
 最後のコマンドはdry-run。実機はPhase 1の `initial` と更新・復旧経路の検証を済ませておき、予定を確認した上で `--execute` を付ける。ESP-IDF版はパスと表示名を置き換える。ゲストのブートローダ・パーティション表は共存機へ書かない。
 
 ## 通常のESP-IDFからビルド

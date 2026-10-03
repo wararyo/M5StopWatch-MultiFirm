@@ -43,6 +43,14 @@ tools\multifirm.ps1 install --slot 2 .pio\build\<env>\firmware.bin --name "MyApp
 tools\multifirm.ps1 install --slot 2 .pio\build\<env>\firmware.bin --name "MyApp" --port COM11 --execute
 ```
 
+macOS / Linux では `tools/multifirm.sh` を使う（実機での動作は未確認）。
+
+```sh
+pio run
+tools/multifirm.sh install --slot 2 .pio/build/<env>/firmware.bin --name "MyApp" --port /dev/ttyACM0
+tools/multifirm.sh install --slot 2 .pio/build/<env>/firmware.bin --name "MyApp" --port /dev/ttyACM0 --execute
+```
+
 ## ドキュメント
 
 - [PCツールの操作](tools/README.md) — 初回導入、ゲスト更新、ホスト更新、復旧、バックアップ復元

@@ -3,36 +3,61 @@
 M5StopWatch に複数のファームウェアを共存させるための書き込みツールです。
 ホスト (ランチャー) を `ota_0`、ゲスト (アプリ) を `ota_1`〜`ota_3` に置く、MultiFirm v1 の固定レイアウト ([partitions.multifirm.csv](../docs/partitions.multifirm.csv)) だけを扱います。
 
-2026-09-19 に実機 (ESP32-S3 / 16 MiB) で、新配置の導入、ゲストの書き込み、復旧、ホストの書き換えまで確認しています。
+2026-09-19 に Windows と実機 (ESP32-S3 / 16 MiB) で、新配置の導入、ゲストの書き込み、復旧、ホストの書き換えまで確認しています。
+**macOS / Linux 用のランチャー (`multifirm.sh`) は、実機での動作を確認していません。**
 
 ## 準備
 
 Python 3.11 と **esptool 4.12.0** が必要です。
+
+Windows (PowerShell):
 
 ```powershell
 py -3.11 -m venv tools\.venv
 tools\.venv\Scripts\python.exe -m pip install -r tools\requirements.txt
 ```
 
-`multifirm.ps1` は次の順に Python を探します。
+macOS / Linux:
 
-1. `$env:MULTIFIRM_PYTHON` (esptool の版が違っても使います。警告を出します)
-2. `tools\.venv\Scripts\python.exe` (esptool 4.12.0 の場合のみ)
-3. `..\M5StopWatch-UserDemo\.tools\idf-tools\python_env\*\Scripts\python.exe` (同上)
+```sh
+python3.11 -m venv tools/.venv
+tools/.venv/bin/python -m pip install -r tools/requirements.txt
+```
+
+ツールは Windows では `tools\multifirm.ps1`、macOS / Linux では `tools/multifirm.sh` から起動します。どちらも引数をそのまま `multifirm.py` に渡します。
+ランチャーは次の順に Python を探します。
+
+1. 環境変数 `MULTIFIRM_PYTHON` (esptool の版が違っても使います。警告を出します)
+2. `tools/.venv` の Python (Windows は `Scripts\python.exe`、macOS / Linux は `bin/python`。esptool 4.12.0 の場合のみ)
+3. `../M5StopWatch-UserDemo/.tools/idf-tools/python_env/*/` の Python (同上)
 
 実機に接続するコマンドは、esptool 4.12.0 以外では実行を拒否します。どうしても別の版で動かす場合は `--allow-untested-esptool` を付けます。
-`inspect` と、`--check-device` / `--execute` を付けない計画の表示は、`python tools\multifirm.py ...` で直接起動すれば esptool がなくても動きます (`multifirm.ps1` は esptool 4.12.0 のある Python が見つからないと起動しません)。
+`inspect` と、`--check-device` / `--execute` を付けない計画の表示は、`python tools\multifirm.py ...` (macOS / Linux では `python3 tools/multifirm.py ...`) で直接起動すれば esptool がなくても動きます (ランチャーは esptool 4.12.0 のある Python が見つからないと起動しません)。
+
+### シリアルポート
+
+`--port` には、USB で接続した M5StopWatch のシリアルポートを指定します。
+
+| OS | 例 | 探し方 |
+|---|---|---|
+| Windows | `COM11` | デバイスマネージャーの「ポート (COM と LPT)」 |
+| macOS | `/dev/cu.usbmodem1101` | `ls /dev/cu.usbmodem*` |
+| Linux | `/dev/ttyACM0` | `ls /dev/ttyACM*` |
+
+Linux でポートを開く権限がない場合は、ユーザーを `dialout` グループ (ディストリビューションによっては `uucp`) に追加し、ログインし直してください。
 
 ## コマンド一覧
 
+以下の例は Windows の書き方です。macOS / Linux では `multifirm.ps1` を `multifirm.sh` に、`\` 区切りのパスを `/` 区切りに、`COM11` を上のポートに読み替えてください。
+
 ```text
 multifirm.ps1 inspect <firmware.bin> [--role guest|host]
-multifirm.ps1 status --port COMxx [--verify]
-multifirm.ps1 backup --port COMxx [--out <dir>]
-multifirm.ps1 install --slot {1,2,3} <firmware.bin> [--name "表示名"] [--erase-slot] [--port COMxx (--check-device | --execute)]
-multifirm.ps1 install-host <host.bin> [--backup <file>] [--erase-slot] [--port COMxx (--check-device | --execute)]
-multifirm.ps1 recover [--port COMxx (--check-device | --execute)]
-multifirm.ps1 initial --host-build <build dir> [--backup <file>] [--port COMxx (--check-device | --execute)]
+multifirm.ps1 status --port <port> [--verify]
+multifirm.ps1 backup --port <port> [--out <dir>]
+multifirm.ps1 install --slot {1,2,3} <firmware.bin> [--name "表示名"] [--erase-slot] [--port <port> (--check-device | --execute)]
+multifirm.ps1 install-host <host.bin> [--backup <file>] [--erase-slot] [--port <port> (--check-device | --execute)]
+multifirm.ps1 recover [--port <port> (--check-device | --execute)]
+multifirm.ps1 initial --host-build <build dir> [--backup <file>] [--port <port> (--check-device | --execute)]
 ```
 
 | コマンド | 用途 |
@@ -59,6 +84,15 @@ pio run
 ..\M5StopWatch-MultiFirm\tools\multifirm.ps1 install --slot 2 .pio\build\m5stopwatch\firmware.bin --port COM11 --check-device
 # 3. 書き込む
 ..\M5StopWatch-MultiFirm\tools\multifirm.ps1 install --slot 2 .pio\build\m5stopwatch\firmware.bin --port COM11 --execute
+```
+
+macOS / Linux では:
+
+```sh
+pio run
+../M5StopWatch-MultiFirm/tools/multifirm.sh install --slot 2 .pio/build/m5stopwatch/firmware.bin --port /dev/ttyACM0
+../M5StopWatch-MultiFirm/tools/multifirm.sh install --slot 2 .pio/build/m5stopwatch/firmware.bin --port /dev/ttyACM0 --check-device
+../M5StopWatch-MultiFirm/tools/multifirm.sh install --slot 2 .pio/build/m5stopwatch/firmware.bin --port /dev/ttyACM0 --execute
 ```
 
 書き込み先のスロットに入っていたアプリは上書きされます。ほかのスロット、設定 (NVS)、起動先 (otadata) は変更しません。
@@ -182,4 +216,12 @@ PHY 初期化データをパーティションに置く設定なら、そのデ�
 $py = "tools\.venv\Scripts\python.exe"   # esptool 4.12.0 の Python
 & $py -m esptool --chip esp32s3 --port COM11 write_flash --flash_mode keep --flash_freq keep --flash_size keep 0 .multifirm\backups\backup-XXXX.bin
 & $py -m esptool --chip esp32s3 --port COM11 verify_flash --flash_mode keep --flash_freq keep --flash_size keep 0 .multifirm\backups\backup-XXXX.bin
+```
+
+macOS / Linux では:
+
+```sh
+py=tools/.venv/bin/python   # esptool 4.12.0 の Python
+"$py" -m esptool --chip esp32s3 --port /dev/ttyACM0 write_flash --flash_mode keep --flash_freq keep --flash_size keep 0 .multifirm/backups/backup-XXXX.bin
+"$py" -m esptool --chip esp32s3 --port /dev/ttyACM0 verify_flash --flash_mode keep --flash_freq keep --flash_size keep 0 .multifirm/backups/backup-XXXX.bin
 ```

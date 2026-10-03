@@ -73,6 +73,7 @@ M5StopWatch-MultiFirm/
   src/multifirm_host.cpp        # MULTIFIRM_HOST 定義時だけ実体を持つ
   tools/multifirm.py
   tools/multifirm.ps1
+  tools/multifirm.sh            # macOS / Linux 用ランチャー
   tools/layout.py
   examples/upload_guard.py   # 各ゲストへ配置する小さな guard のひな形
   tools/requirements.txt      # 検証済み esptool の版を固定
@@ -198,7 +199,7 @@ multifirm.py initial --host-build <dir> --port COMxx [--execute]
 ### 5.4 Python 環境
 
 検証済み Python と esptool のバージョンを MultiFirm 側で記録・固定する。
-`multifirm.ps1` は MultiFirm 用の環境または明示指定された Python を使用し、起動時に依存の版を確認する。
+`multifirm.ps1` (Windows) と `multifirm.sh` (macOS / Linux) は MultiFirm 用の環境または明示指定された Python を使用し、起動時に依存の版を確認する。
 UserDemo の `.tools` 環境も、固定した版を満たす場合には選択可能とするが、必須にはしない。
 
 ### 5.5 イメージヘッダの扱い
