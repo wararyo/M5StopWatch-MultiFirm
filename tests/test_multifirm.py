@@ -15,6 +15,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,6 +28,7 @@ import layout as L  # noqa: E402
 import layout_fixtures  # noqa: E402
 import multifirm as M  # noqa: E402
 
+M.LANG = "ja"  # the assertions below match the Japanese messages; LanguageTest covers English
 NOW = 1_790_000_000.0
 
 
@@ -864,6 +866,44 @@ class InitialTest(ToolCase):
         self.assertEqual(code, 0, out)
         self.assertIn("legacy-3guest", out)
         self.assertEqual(self.dev.mutating_ops(), [])
+
+
+class LanguageTest(ToolCase):
+    def detect(self, platform: str, env: dict[str, str]) -> str:
+        with mock.patch.object(M.sys, "platform", platform), mock.patch.dict(os.environ, env, clear=True):
+            return M.detect_lang()
+
+    def test_detect_lang(self):
+        self.assertEqual(self.detect("linux", {"LANG": "ja_JP.UTF-8"}), "ja")
+        self.assertEqual(self.detect("darwin", {"LANG": "en_US.UTF-8"}), "en")
+        self.assertEqual(self.detect("linux", {"LC_ALL": "C", "LANG": "ja_JP.UTF-8"}), "en")
+        self.assertEqual(self.detect("linux", {}), "en")
+        self.assertEqual(self.detect("linux", {"MULTIFIRM_LANG": "en", "LANG": "ja_JP.UTF-8"}), "en")
+        self.assertEqual(self.detect("win32", {"MULTIFIRM_LANG": "ja"}), "ja")
+
+    def test_english_output_has_no_japanese(self):
+        japanese = re.compile(r"[぀-ヿ一-鿿]")
+        guest = self.file("g.bin", make_image(desc=app_desc("MyGuest")))
+        host = self.file("h.bin", make_image(desc=app_desc("MyHost"), seed=9))
+        build = make_host_build(self.dir / "build")
+        runs = [["inspect", guest], ["install", "--slot", "1", guest],
+                ["install", "--slot", "1", guest, "--port", "COM99", "--execute"],
+                ["status", "--port", "COM99", "--verify"],
+                ["install-host", host, "--port", "COM99", "--execute"],
+                ["recover", "--port", "COM99", "--execute"],
+                ["initial", "--host-build", str(build), "--port", "COM99", "--execute"]]
+        with mock.patch.object(M, "LANG", "en"):
+            outputs = [self.run_tool(*argv) for argv in runs]
+            help_text = M.build_parser()._subparsers._group_actions[0].choices["install"].format_help()
+            logs = [p.read_text(encoding="utf-8") for p in (self.dir / "state" / "logs").glob("*.log")]
+        for argv, (code, out) in zip(runs, outputs):
+            self.assertEqual(code, 0, out)
+            self.assertIsNone(japanese.search(out), out)
+        self.assertIn("Display name: MyGuest", outputs[1][1])
+        self.assertIn("install done: slot 1 = MyGuest (device reset)", outputs[2][1])
+        self.assertIsNone(japanese.search(help_text), help_text)
+        for text in logs:
+            self.assertIsNone(japanese.search(text), text)
 
 
 # ---------------------------------------------------------------- esptool backend

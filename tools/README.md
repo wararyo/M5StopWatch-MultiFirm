@@ -34,6 +34,11 @@ tools/.venv/bin/python -m pip install -r tools/requirements.txt
 実機に接続するコマンドは、esptool 4.12.0 以外では実行を拒否します。どうしても別の版で動かす場合は `--allow-untested-esptool` を付けます。
 `inspect` と、`--check-device` / `--execute` を付けない計画の表示は、`python tools\multifirm.py ...` (macOS / Linux では `python3 tools/multifirm.py ...`) で直接起動すれば esptool がなくても動きます (ランチャーは esptool 4.12.0 のある Python が見つからないと起動しません)。
 
+### 表示言語
+
+メッセージとログは、OS の表示言語が日本語なら日本語、それ以外は英語で出ます。Windows は表示言語の設定、macOS / Linux は `LC_ALL`、`LC_MESSAGES`、`LANG` の順に最初に設定されている値を見ます。
+環境変数 `MULTIFIRM_LANG` に `ja` か `en` を指定すると、その言語に固定できます。
+
 ### シリアルポート
 
 `--port` には、USB で接続した M5StopWatch のシリアルポートを指定します。
