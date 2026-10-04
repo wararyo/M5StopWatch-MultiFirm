@@ -41,16 +41,37 @@ class ToolError(Exception):
 # ---------------------------------------------------------------- logging
 
 class Log:
+    """Console gets the outcome; the log file also gets hashes, image details and esptool output."""
+
     def __init__(self, path: Path | None = None):
         self.path = path
         self._fh = None
+        self._open_line = False
         if path:
             path.parent.mkdir(parents=True, exist_ok=True)
             self._fh = path.open("a", encoding="utf-8")
 
     def __call__(self, msg: str = "") -> None:
+        self._close_line()
         print(msg, flush=True)
         self.detail(msg)
+
+    def begin(self, msg: str) -> None:
+        """Print a step without a newline; end() appends its result to the same line."""
+        self._close_line()
+        print(msg, end="", flush=True)
+        self._open_line = True
+        self.detail(msg)
+
+    def end(self, result: str) -> None:
+        print(f" {result}" if self._open_line else f"    {result}", flush=True)
+        self._open_line = False
+        self.detail(f"    {result}")
+
+    def _close_line(self) -> None:
+        if self._open_line:
+            print(flush=True)
+            self._open_line = False
 
     def detail(self, msg: str) -> None:
         if self._fh:
@@ -58,6 +79,7 @@ class Log:
             self._fh.flush()
 
     def close(self) -> None:
+        self._close_line()
         if self._fh:
             self._fh.close()
 
@@ -131,9 +153,9 @@ class Ctx:
 def connect(ctx: Ctx, log: Log) -> tuple[Device, DeviceInfo]:
     if not ctx.args.port:
         raise ToolError("--port が必要です")
-    log(f"MultiFirm {TOOL_VERSION} / Python {sys.version.split()[0]}")
+    log.detail(f"MultiFirm {TOOL_VERSION} / Python {sys.version.split()[0]}")
+    log.detail(f"リセット方針: {RESET_POLICY}")
     log(f"ログ: {log.path}")
-    log(f"リセット方針: {RESET_POLICY}")
     dev = ctx.dev = TrackedDevice(ctx.factory(ctx.args, log))
     info = dev.connect()
     log(f"接続: {ctx.args.port} {info.chip} MAC {info.mac} flash {info.flash_size} "
@@ -144,7 +166,7 @@ def connect(ctx: Ctx, log: Log) -> tuple[Device, DeviceInfo]:
 def require_layout(dev: Device, log: Log) -> None:
     table = dev.read(L.PARTITION_TABLE_OFFSET, L.PARTITION_TABLE_SIZE)
     kind = L.classify_table(table)
-    log(f"パーティション表: {kind} (SHA-256 {hashlib.sha256(table).hexdigest()})")
+    log.detail(f"パーティション表: {kind} (SHA-256 {hashlib.sha256(table).hexdigest()})")
     if kind != "multifirm-v1":
         raise ToolError(f"実機の表が MultiFirm v1 ではありません ({kind})。書き込みません。"
                         "新配置の導入は initial を使います")
@@ -159,20 +181,24 @@ def check_chip_rev(info: img.ImageInfo, dev_info: DeviceInfo, what: str) -> None
 # ---------------------------------------------------------------- verified primitives
 
 def erase_verified(dev: Device, log: Log, offset: int, size: int, what: str) -> None:
-    log(f"  消去 {what}: {rng(offset, size)}")
+    log.begin(f"  消去 {what}: {rng(offset, size)}")
     dev.erase(offset, size)
     if not dev.verify(offset, ff(size)):
         raise ToolError(f"{what} の消去を確認できません ({rng(offset, size)})")
-    log("    消去済みを確認")
+    log.end("消去済みを確認")
 
 
-def write_verified(dev: Device, log: Log, offset: int, data: bytes, what: str) -> bytes:
-    log(f"  書き込み {what}: {rng(offset, len(data))} SHA-256 {hashlib.sha256(data).hexdigest()}")
+def write_verified(dev: Device, log: Log, offset: int, data: bytes, what: str,
+                   done: bool = True) -> bytes:
+    """With done=False the caller verifies the read-back further and ends the line itself."""
+    log.begin(f"  書き込み {what}: {rng(offset, len(data))}")
+    log.detail(f"    SHA-256 {hashlib.sha256(data).hexdigest()}")
     dev.write(offset, data)
     back = dev.read(offset, len(data))
     if back != data:
         raise ToolError(f"{what} の読み戻しが一致しません")
-    log("    読み戻し一致")
+    if done:
+        log.end("読み戻し一致")
     return back
 
 
@@ -184,7 +210,8 @@ def check_unchanged(dev: Device, log: Log, snaps: list[tuple[str, int, bytes]]) 
     changed = [name for name, off, data in snaps if not dev.verify(off, data)]
     if changed:
         raise ToolError(f"書き込み対象外の領域が変化しました: {', '.join(changed)}")
-    log(f"  不変を確認: {', '.join(name for name, _, _ in snaps)}")
+    log("  書き込み対象外の領域の不変を確認")
+    log.detail(f"    {', '.join(name for name, _, _ in snaps)}")
 
 
 def preserved_regions(exclude_meta_slot: int | None = None) -> list[tuple[str, int, int]]:
@@ -279,14 +306,23 @@ def boot_selection(otadata: bytes) -> str:
 
 # ---------------------------------------------------------------- input files
 
+def log_image(log: Log, label: str, path: Path, info: img.ImageInfo) -> None:
+    """One summary line on the console; the full description goes to the log file."""
+    summary = f"{info.image_size:,} bytes" if info.image_size else "解析できません"
+    if info.kind == "app":
+        summary = f"project_name {info.project_name!r} version {info.version!r}, {summary}"
+    log(f"{label}: {path.name} ({summary})")
+    log.detail(f"  {path.resolve()}")
+    for line in img.describe(info):
+        log.detail(f"  {line}")
+    for w in info.warnings:
+        log(f"  警告: {w}")
+
+
 def load_guest(args: argparse.Namespace, log: Log) -> tuple[bytes, img.ImageInfo, str]:
     data = Path(args.firmware).read_bytes()
     info = img.verify_app_file(data, L.GUEST_MAX_SIZE)
-    log(f"入力: {Path(args.firmware).resolve()}")
-    for line in img.describe(info):
-        log(f"  {line}")
-    for w in info.warnings:
-        log(f"  警告: {w}")
+    log_image(log, "入力", Path(args.firmware), info)
     if not info.ok:
         raise ToolError("イメージを受け付けられません: " + "; ".join(info.errors))
     if args.name is not None:
@@ -305,11 +341,7 @@ def load_guest(args: argparse.Namespace, log: Log) -> tuple[bytes, img.ImageInfo
 def load_host_image(path: str, log: Log) -> tuple[bytes, img.ImageInfo]:
     data = Path(path).read_bytes()
     info = img.verify_app_file(data, L.HOST_MAX_SIZE)
-    log(f"入力 (ホスト): {Path(path).resolve()}")
-    for line in img.describe(info):
-        log(f"  {line}")
-    for w in info.warnings:
-        log(f"  警告: {w}")
+    log_image(log, "入力 (ホスト)", Path(path), info)
     if not info.ok:
         raise ToolError("ホストイメージを受け付けられません: " + "; ".join(info.errors))
     return data, info
@@ -395,9 +427,9 @@ def load_host_build(directory: str, log: Log) -> HostBuild:
 
     bl = read(files["bootloader"])
     bl_info = img.verify_bootloader_file(bl, L.BOOTLOADER_MAX_SIZE)
-    log("  bootloader:")
+    log.detail("  bootloader:")
     for line in img.describe(bl_info):
-        log(f"    {line}")
+        log.detail(f"    {line}")
     if not bl_info.ok:
         raise ToolError("ブートローダを受け付けられません: " + "; ".join(bl_info.errors))
 
@@ -405,7 +437,7 @@ def load_host_build(directory: str, log: Log) -> HostBuild:
     if table.ljust(L.PARTITION_TABLE_SIZE, FF)[:L.PARTITION_TABLE_SIZE] != L.PARTITION_TABLE \
             or len(table) > L.PARTITION_TABLE_SIZE:
         raise ToolError("ビルドのパーティション表が MultiFirm v1 と一致しません")
-    log(f"  partition-table: MultiFirm v1 と一致 ({len(table)} bytes)")
+    log.detail(f"  partition-table: MultiFirm v1 と一致 ({len(table)} bytes)")
 
     app, app_info = load_host_image(str(files["app"]), log)
 
@@ -420,9 +452,9 @@ def load_host_build(directory: str, log: Log) -> HostBuild:
         phy = read(root / flash_files[L.PHY_INIT.offset])
         if not 0 < len(phy) <= L.PHY_INIT.size:
             raise ToolError("phy_init データのサイズが不正です")
-        log(f"  phy_init: {len(phy)} bytes を書き込む")
+        log.detail(f"  phy_init: {len(phy)} bytes を書き込む")
     else:
-        log("  phy_init: パーティション不使用の設定のため消去する")
+        log.detail("  phy_init: パーティション不使用の設定のため消去する")
     return HostBuild(bl, bl_info, table.ljust(L.PARTITION_TABLE_SIZE, FF), app, app_info, phy)
 
 
@@ -453,8 +485,8 @@ def take_backup(ctx: Ctx, dev: Device, info: DeviceInfo, log: Log) -> tuple[Path
         "created_at": dt.datetime.fromtimestamp(ctx.now()).isoformat(timespec="seconds"),
     }
     path.with_suffix(".json").write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
-    log(f"バックアップ: {path}")
-    log(f"  SHA-256 {sha}、実機 MD5 と一致")
+    log(f"バックアップ: {path} (実機 MD5 と一致)")
+    log.detail(f"  SHA-256 {sha}")
     return path, data
 
 
@@ -485,10 +517,12 @@ def latest_backup(ctx: Ctx, mac: str) -> Path | None:
 
 # ---------------------------------------------------------------- commands
 
-def plan_header(log: Log, lines: list[str]) -> None:
-    log("書き込み計画:")
+def plan_header(log: Log, args: argparse.Namespace, lines: list[str]) -> None:
+    """--execute reports each step as it runs, so the plan itself goes only to the log file."""
+    out = log.detail if args.execute else log
+    out("書き込み計画:")
     for line in lines:
-        log(f"  {line}")
+        out(f"  {line}")
 
 
 def dry_run_note(log: Log) -> int:
@@ -499,8 +533,7 @@ def dry_run_note(log: Log) -> int:
 
 def finish_ok(dev: Device, log: Log, message: str) -> int:
     dev.reset()
-    log("hard reset でアプリへ戻しました")
-    log(message)
+    log(f"{message} (実機をリセットしました)")
     return 0
 
 
@@ -518,7 +551,7 @@ def run_logged(ctx: Ctx, log: Log, body: Callable[[], int], hint: str = "") -> i
             return 1
         try:
             dev.reset()
-            log("書き込み・消去の前に中止しました。hard reset でアプリへ戻しました")
+            log("書き込み・消去の前に中止しました (実機をリセットしました)")
         except DeviceError as reset_error:
             log(f"リセットにも失敗しました: {reset_error}")
         return 1
@@ -566,7 +599,7 @@ def _status_slot(dev: Device, log: Log, index: int, part: L.Partition, meta: byt
         + (f" - {report.error}" if report.error else ""))
     if im and im.kind == "app":
         log(f"  project_name {im.project_name!r} version {im.version!r} idf {im.idf_ver}")
-        log(f"  elf_sha256 {im.elf_sha256.hex()}")
+        (log if verify else log.detail)(f"  elf_sha256 {im.elf_sha256.hex()}")
         if report.state == READY:
             log(f"  image {im.image_size:,} bytes, digest {im.appended_digest.hex()}")
     if index == 0:
@@ -644,7 +677,7 @@ def cmd_install(ctx: Ctx) -> int:
         meta_off = L.meta_sector_offset(args.slot)
         record = L.MetaRecord(name, info.image_size, info.elf_sha256, info.appended_digest, int(ctx.now()))
         sector = L.meta_sector(record)
-        plan_header(log, [
+        plan_header(log, args, [
             f"1. メタデータ[{args.slot}] 消去 {rng(meta_off, L.SECTOR_SIZE)}",
             (f"2. {part.label} 全域消去 {rng(part.offset, part.size)}" if args.erase_slot
              else "2. 書き込み対象セクタのみ自動消去 (スロット末尾は保持)"),
@@ -668,17 +701,17 @@ def cmd_install(ctx: Ctx) -> int:
         erase_verified(dev, log, meta_off, L.SECTOR_SIZE, f"メタデータ[{args.slot}]")
         if args.erase_slot:
             erase_verified(dev, log, part.offset, part.size, part.label)
-        readback = write_verified(dev, log, part.offset, data, part.label)
+        readback = write_verified(dev, log, part.offset, data, part.label, done=False)
         back = slot_report(part, img.parse_image(readback, part.size))
         if back.state != READY or back.info.appended_digest != info.appended_digest:
             raise ToolError(f"書き込んだイメージを検証できません: {back.state} {back.error}")
-        log(f"    イメージ検証 OK (digest {info.appended_digest.hex()})")
-        meta_readback = write_verified(dev, log, meta_off, sector, f"メタデータ[{args.slot}]")
+        log.end("読み戻し一致、イメージ検証 OK")
+        meta_readback = write_verified(dev, log, meta_off, sector, f"メタデータ[{args.slot}]", done=False)
         rec, reason = L.decode_meta(meta_readback, part.size)
         reason = reason or match_meta(rec, back.info)
         if reason:
             raise ToolError(f"メタデータを検証できません: {reason}")
-        log("    メタデータ検証 OK")
+        log.end("読み戻し一致、メタデータ検証 OK")
         check_unchanged(dev, log, snaps)
         return finish_ok(dev, log, f"install 完了: slot {args.slot} = {name}")
 
@@ -699,7 +732,7 @@ def cmd_install_host(ctx: Ctx) -> int:
 
     def body() -> int:
         data, info = load_host_image(args.firmware, log)
-        plan_header(log, [
+        plan_header(log, args, [
             "1. 全体バックアップを確認 (現状と一致しなければ新規取得)",
             (f"2. ota_0 全域消去 {rng(L.HOST.offset, L.HOST.size)}" if args.erase_slot
              else "2. 書き込み対象セクタのみ自動消去 (スロット末尾は保持)"),
@@ -731,11 +764,11 @@ def cmd_install_host(ctx: Ctx) -> int:
         log("実行:")
         if args.erase_slot:
             erase_verified(dev, log, L.HOST.offset, L.HOST.size, "ota_0")
-        readback = write_verified(dev, log, L.HOST.offset, data, "ota_0")
+        readback = write_verified(dev, log, L.HOST.offset, data, "ota_0", done=False)
         back = slot_report(L.HOST, img.parse_image(readback, L.HOST.size))
         if back.state != READY or back.info.appended_digest != info.appended_digest:
             raise ToolError(f"書き込んだホストを検証できません: {back.state} {back.error}")
-        log(f"    イメージ検証 OK (digest {info.appended_digest.hex()})")
+        log.end("読み戻し一致、イメージ検証 OK")
         changed = _verify_backup_regions(dev, backup)
         if changed:
             raise ToolError(f"保護領域がバックアップと一致しません: {', '.join(changed)}")
@@ -752,7 +785,7 @@ def cmd_recover(ctx: Ctx) -> int:
     log = ctx.open_log("recover") if device_mode(args) else Log()
 
     def body() -> int:
-        plan_header(log, [
+        plan_header(log, args, [
             "1. 表とホスト (ota_0) のイメージを検証",
             f"2. otadata 消去 {rng(L.OTADATA.offset, L.OTADATA.size)} → 次回起動はホスト",
             "書き込まない: NVS / メタデータ / 各スロット",
@@ -798,12 +831,13 @@ def cmd_initial(ctx: Ctx) -> int:
                   f"書き込まない: storage {rng(L.STORAGE.offset, L.STORAGE.size)}, "
                   f"coredump {rng(L.COREDUMP.offset, L.COREDUMP.size)}",
                   "NVS 設定と BLE ボンドは初期化されます。ゲストは空になり再インストールが必要です"]
-        plan_header(log, lines)
+        plan_header(log, args, lines)
         if not device_mode(args):
             return dry_run_note(log)
         dev, dinfo = connect(ctx, log)
         current = dev.read(L.PARTITION_TABLE_OFFSET, L.PARTITION_TABLE_SIZE)
-        log(f"現在の表: {L.classify_table(current)} (SHA-256 {hashlib.sha256(current).hexdigest()})")
+        log(f"現在の表: {L.classify_table(current)}")
+        log.detail(f"  SHA-256 {hashlib.sha256(current).hexdigest()}")
         check_chip_rev(build.app_info, dinfo, "ホストイメージ")
         check_chip_rev(build.bootloader_info, dinfo, "ブートローダ")
         if args.check_device:
